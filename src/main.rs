@@ -1,81 +1,111 @@
 extern crate hmac;
 extern crate sha2;
 extern crate base64;
+extern crate hex;
 
 use hmac::{Hmac, Mac};
-use sha2::{Sha256, Digest}; 
-use base64::engine::general_purpose::STANDARD;  
-use base64::Engine;  
+use sha2::{Sha256, Digest};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
-fn mod_shift(c: u8, shift: u8) -> u8 {
-    ((c as u16 + shift as u16) % 256) as u8
-}
+type HmacSha256 = Hmac<Sha256>;
 
-fn scatter_transform(input: &str, salt: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in input.chars().enumerate() {
-        let shifted_char = mod_shift(c as u8, (i + salt.len()) as u8);
-        result.push(shifted_char as char);
-    }
-    result
-}
-
-fn reverse_scatter_transform(input: &str, salt: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in input.chars().enumerate() {
-        let shift = (i + salt.len()) as u16;
-        let unshifted = mod_shift(c as u8, (256 - shift) as u8);
-        result.push(unshifted as char);
-    }
-    result
-}
-
-fn derive_key(input: &str, salt: &str) -> u8 {
-    let mut hmac = Hmac::<Sha256>::new_from_slice(salt.as_bytes()).expect("HMAC can take key of any size");
-    hmac.update(input.as_bytes());
-    let result = hmac.finalize();
-    let key_bytes = result.into_bytes();
-    key_bytes[0]
-}
-
-fn generate_salt_for_conversation(conversation_id: &str) -> String {
+fn generate_salt(conversation_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(conversation_id.as_bytes());
-    let result = hasher.finalize(); 
-    hex::encode(result)
+    hex::encode(hasher.finalize())
 }
 
-fn custom_encrypt(input: &str, key: u8, salt: &str) -> Vec<u8> {
-    let transformed = scatter_transform(input, salt);
-    transformed
+fn derive_key(message_id: &str, salt: &str) -> [u8; 32] {
+    let mut hmac = HmacSha256::new_from_slice(salt.as_bytes()).expect("HMAC needs a key");
+    hmac.update(message_id.as_bytes());
+    let result = hmac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result[..32]);
+    key
+}
+
+fn scatter_transform(input: &str, salt: &str) -> Vec<u8> {
+    input
         .bytes()
-        .map(|b| mod_shift(b, key))
+        .enumerate()
+        .map(|(i, b)| b.wrapping_add(((i + salt.len()) % 256) as u8))
         .collect()
 }
 
-fn custom_decrypt(input: &[u8], key: u8, salt: &str) -> String {
-    let decrypted: Vec<u8> = input
+fn reverse_scatter_transform(input: &[u8], salt: &str) -> String {
+    let bytes: Vec<u8> = input
         .iter()
-        .map(|b| mod_shift(*b, (256 - key as u16) as u8))
+        .enumerate()
+        .map(|(i, &b)| b.wrapping_sub(((i + salt.len()) % 256) as u8))
         .collect();
-    reverse_scatter_transform(&String::from_utf8_lossy(&decrypted), salt)
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn xor_encrypt(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    data.iter()
+        .enumerate()
+        .map(|(i, &b)| b ^ key[i % key.len()])
+        .collect()
+}
+
+fn xor_decrypt(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    xor_encrypt(data, key) 
+}
+
+fn hmac_auth(data: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut hmac = HmacSha256::new_from_slice(key).expect("HMAC needs a key");
+    hmac.update(data);
+    hmac.finalize().into_bytes().to_vec()
+}
+
+fn custom_encrypt(input: &str, conversation_id: &str, message_id: &str) -> String {
+    let salt = generate_salt(conversation_id);
+    let key = derive_key(message_id, &salt);
+
+    let scattered = scatter_transform(input, &salt);
+    let encrypted = xor_encrypt(&scattered, &key);
+
+    let tag = hmac_auth(&encrypted, &key); 
+    let mut output = encrypted;
+    output.extend_from_slice(&tag[..16]); 
+
+    STANDARD.encode(&output)
+}
+
+fn custom_decrypt(encoded: &str, conversation_id: &str, message_id: &str) -> Result<String, &'static str> {
+    let salt = generate_salt(conversation_id);
+    let key = derive_key(message_id, &salt);
+
+    let decoded = STANDARD.decode(encoded).map_err(|_| "Invalid base64")?;
+
+    if decoded.len() < 16 {
+        return Err("Ciphertext too short");
+    }
+
+    let (ciphertext, tag) = decoded.split_at(decoded.len() - 16);
+    let expected_tag = hmac_auth(ciphertext, &key);
+    if expected_tag[..16] != tag[..] {
+        return Err("HMAC verification failed!");
+    }
+
+    let decrypted = xor_decrypt(ciphertext, &key);
+    Ok(reverse_scatter_transform(&decrypted, &salt))
 }
 
 fn main() {
-    let input = "Cryptix is cool!";
+    let message = "Cryptix Chat 🔒✨";
+    let conversation_id = "CONV-001-ALPHA";
+    let message_id = "MSG-007"; 
 
-    let conversation_id = "CUSTOM_ID_FROM_USERS"; 
+    let encrypted = custom_encrypt(message, conversation_id, message_id);
+    println!("Encrypted (Base64): {}", encrypted);
 
-    let salt = generate_salt_for_conversation(conversation_id);
-    let key = derive_key(input, &salt);
-
-    let encrypted_bytes = custom_encrypt(input, key, &salt);
-    let encrypted_b64 = STANDARD.encode(&encrypted_bytes);
-    println!("Encrypted (Base64): {}", encrypted_b64);
-
-    let decoded_bytes = STANDARD.decode(&encrypted_b64).unwrap();
-    let decrypted = custom_decrypt(&decoded_bytes, key, &salt);
-    println!("Decrypted text: {}", decrypted);
-
-    assert_eq!(input, decrypted);
+    match custom_decrypt(&encrypted, conversation_id, message_id) {
+        Ok(decrypted) => {
+            println!("Decrypted: {}", decrypted);
+            assert_eq!(message, decrypted);
+        }
+        Err(e) => println!("Failed to decrypt: {}", e),
+    }
 }

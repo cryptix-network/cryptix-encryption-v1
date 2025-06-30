@@ -2,7 +2,6 @@
 
 @ TODO:
 - Use the midstate as part of a real secret key, not just derived from a publicly known string.
-- HMAC in Final Systen = 32 Byte
 - Logging not sufficient
 - Exchange Sha3 with Cryptix OX8 Light
 - Prepare conversation_id and message_id for dynamic unkown input

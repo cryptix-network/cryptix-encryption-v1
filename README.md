@@ -1,1 +1,3 @@
-A -still- simple function for individual encryption and decryption
+In today’s world, where surveillance is becoming increasingly widespread, privacy is more important than ever. We believe that every individual has the fundamental right to private communication—and that no government or authority should be allowed to monitor personal conversations. That’s why our encryption and messaging system is designed to protect against exactly that.
+
+Unlike conventional messaging platforms that rely on centralized servers, Cryptix will operate entirely on a decentralized blockchain architecture. This means there is no single point of failure—no central authority to shut it down, intercept it, or manipulate it.

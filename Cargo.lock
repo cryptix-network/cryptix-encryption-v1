@@ -47,6 +47,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "once_cell",
  "rand",
  "sha2",
  "tracing",

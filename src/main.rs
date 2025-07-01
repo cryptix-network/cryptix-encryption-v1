@@ -1,3 +1,5 @@
+// main.rs @Cryptis
+
 /* 
 
 @ TODO:
@@ -42,6 +44,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rand::Rng;
 use std::time::Instant;
+
+mod ai_guard;
+use ai_guard::protected_decrypt;
 
 use bitcoin_hashes::sha256::{HashEngine as Sha256Engine, Midstate};
 use bitcoin_hashes::HashEngine;
@@ -181,7 +186,11 @@ fn main() {
 
     info!("--- Quantum Decryption Debug ---");
     let start_dec = Instant::now();
-    match quantum_decrypt(&encrypted, conversation_id, message_id, secret) {
+    match protected_decrypt(
+        message_id,
+        &base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap(),
+        || quantum_decrypt(&encrypted, conversation_id, message_id, secret),
+    ) {
         Ok(decrypted) => {
             let duration_dec = start_dec.elapsed();
             info!("Decrypted Message: {}", decrypted);
@@ -285,7 +294,7 @@ mod tests {
 
         let mut bad_bytes = quantum_encrypt("Valid UTF8", conv, msg_id, secret);
         let mut raw = base64::engine::general_purpose::STANDARD.decode(&bad_bytes).unwrap();
-        raw[40] = 0xFF; // Invalid Test
+        raw[40] = 0xFF;
         bad_bytes = base64::engine::general_purpose::STANDARD.encode(&raw);
 
         let result = quantum_decrypt(&bad_bytes, conv, msg_id, secret);

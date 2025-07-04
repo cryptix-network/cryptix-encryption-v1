@@ -22,7 +22,8 @@ Thus, the design inherently increases resistance to quantum brute-force attacks 
 - Protection features and AI interface for DDOS attacks, payloads and other attacks.
 
 @V.1.2
-- Added protection against side-channel attacks
+- Added protection against Timing Attacks
+- Added protection against side-channel attacks (not complete)
 - High-entropy 16-byte nonce from random, timestamp, and device ID
 
 */

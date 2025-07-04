@@ -25,6 +25,7 @@ Thus, the design inherently increases resistance to quantum brute-force attacks 
 - Added protection against Timing Attacks
 - Added protection against side-channel attacks (not complete)
 - High-entropy 16-byte nonce from random, timestamp, and device ID
+- Addet Timing Attack Test
 
 */
 

@@ -43,6 +43,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rand::Rng;
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use subtle::ConstantTimeEq;
 
@@ -64,11 +65,31 @@ fn generate_midstate(data: &[u8]) -> Midstate {
     engine.midstate()
 }
 
-// Generate random 16-byte nonce
+// Generate a deterministic, high-entropy 16-byte nonce from random, timestamp, and device ID
 fn generate_nonce() -> [u8; 16] {
     let mut rng = rand::thread_rng();
+    let mut random_bytes = [0u8; 16];
+    rng.fill(&mut random_bytes);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_nanos()
+        .to_be_bytes();
+
+    let device_id = b"CryptixDevice42"; 
+
+    let mut entropy_source = Vec::with_capacity(16 + 16 + 16);
+    entropy_source.extend_from_slice(&random_bytes);
+    entropy_source.extend_from_slice(&timestamp[..16.min(timestamp.len())]);
+    entropy_source.extend_from_slice(device_id);
+
+    let mut hasher = Sha256::new();
+    hasher.update(&entropy_source);
+    let hash = hasher.finalize();
+
     let mut nonce = [0u8; 16];
-    rng.fill(&mut nonce);
+    nonce.copy_from_slice(&hash[..16]);
     nonce
 }
 
@@ -304,7 +325,7 @@ mod tests {
         let tampered = base64::engine::general_purpose::STANDARD.encode(&decoded);
 
         let result = quantum_decrypt(&tampered, conv, msg_id, secret);
-        assert!(result.is_err(), "Manipuliertes HMAC hätte fehlschlagen müssen");
+        assert!(result.is_err(), "Manipulated HMAC should have failed");
     }
 
     #[test]

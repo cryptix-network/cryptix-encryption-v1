@@ -50,6 +50,7 @@ dependencies = [
  "once_cell",
  "rand",
  "sha2",
+ "subtle",
  "tracing",
  "tracing-subscriber",
 ]

@@ -27,7 +27,6 @@ Thus, the design inherently increases resistance to quantum brute-force attacks 
 Template created
 
 */
-
 extern crate hmac;
 extern crate sha2;
 extern crate base64;
@@ -36,6 +35,7 @@ extern crate bitcoin_hashes;
 extern crate hkdf;
 extern crate tracing;
 extern crate tracing_subscriber;
+extern crate subtle;
 
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Digest};
@@ -43,6 +43,8 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rand::Rng;
 use std::time::Instant;
+
+use subtle::ConstantTimeEq;
 
 mod ai_guard;
 use ai_guard::protected_decrypt;
@@ -126,7 +128,7 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
     STANDARD.encode(&output)
 }
 
-// Decryption function
+// Decryption function (with constant-time HMAC check)
 fn quantum_decrypt(encoded: &str, conversation_id: &str, message_id: &str, secret: &[u8]) -> Result<String, &'static str> {
     let decoded = STANDARD.decode(encoded).map_err(|_| "Invalid base64")?;
 
@@ -141,7 +143,7 @@ fn quantum_decrypt(encoded: &str, conversation_id: &str, message_id: &str, secre
     let key = derive_key(message_id, &midstate, nonce, secret);
     let expected_tag = hmac_auth(ciphertext, &key);
 
-    if expected_tag != tag {
+    if expected_tag.ct_eq(tag).unwrap_u8() != 1 {
         return Err("HMAC verification failed");
     }
 
@@ -200,6 +202,7 @@ fn main() {
         Err(e) => error!("Decryption failed: {}", e),
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -283,6 +286,25 @@ mod tests {
         let result = quantum_decrypt(&encrypted, conv, wrong_msg_id, secret);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hmac_cteq() {
+        let msg = "CTEqTest!";
+        let conv = "conv-cteq";
+        let msg_id = "msg-cteq";
+        let secret = b"secure-key";
+
+        let encrypted = quantum_encrypt(msg, conv, msg_id, secret);
+        let mut decoded = base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap();
+
+        let hmac_offset = decoded.len() - 32;
+        decoded[hmac_offset] ^= 0xFF; 
+
+        let tampered = base64::engine::general_purpose::STANDARD.encode(&decoded);
+
+        let result = quantum_decrypt(&tampered, conv, msg_id, secret);
+        assert!(result.is_err(), "Manipuliertes HMAC hätte fehlschlagen müssen");
     }
 
     #[test]

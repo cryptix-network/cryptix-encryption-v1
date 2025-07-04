@@ -21,6 +21,14 @@ Against quantum attacks using Grover’s algorithm (which offers a quadratic spe
 
 Thus, the design inherently increases resistance to quantum brute-force attacks without sacrificing performance or requiring new cryptographic primitives, making your implementation effectively quantum-resistant.
 
+@V.1.1.1
+- Protection features and AI interface for DDOS attacks, payloads and other attacks.
+
+@V.1.2
+- Added protection against side-channel attacks
+- High-entropy 16-byte nonce from random, timestamp, and device ID
+
+
 
 @V.1.0
 

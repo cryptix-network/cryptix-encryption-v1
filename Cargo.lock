@@ -65,6 +65,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "log",
  "lru",
  "once_cell",
  "rand",

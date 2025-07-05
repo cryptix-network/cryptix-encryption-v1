@@ -31,6 +31,12 @@ pub fn is_replay(conversation_id: &str, message_id: &str) -> bool {
     }
 }
 
+/// Resets the replay cache for testing.
+#[cfg(test)]
+pub fn reset_replay_cache() {
+    let mut cache = REPLAY_CACHE.lock().unwrap();
+    cache.clear();
+}
 
 #[cfg(test)]
 mod tests {
@@ -64,7 +70,6 @@ mod tests {
         // Activate for real test
         // sleep(Duration::from_secs(6 * 60));
 
-       //  assert_eq!(is_replay(conv_id, msg_id), false);
+        // assert_eq!(is_replay(conv_id, msg_id), false);
     }
 }
-

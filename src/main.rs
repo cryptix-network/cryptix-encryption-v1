@@ -28,7 +28,6 @@ Thus, the design inherently increases resistance to quantum brute-force attacks 
 - Addet Timing Attack Test
 
 */
-
 extern crate hmac;
 extern crate sha2;
 extern crate base64;
@@ -62,6 +61,16 @@ use hkdf::Hkdf;
 use tracing::{info, error};
 
 type HmacSha256 = Hmac<Sha256>;
+
+
+#[derive(Debug)]
+enum DecryptError {
+    ReplayDetected,
+    InvalidBase64,
+    CiphertextTooShort,
+    HmacVerificationFailed,
+    InvalidUtf8,
+}
 
 // Get SHA-256 midstate 
 fn generate_midstate(data: &[u8]) -> Midstate {
@@ -154,20 +163,20 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
     STANDARD.encode(&output)
 }
 
-// Decryption function (with constant-time HMAC check)
+// Decryption function
 fn quantum_decrypt(
     encoded: &str,
     conversation_id: &str,
     message_id: &str,
     secret: &[u8],
-) -> Result<String, &'static str> {
+) -> Result<String, DecryptError> {
     if is_replay(conversation_id, message_id) {
-        return Err("Replay detected");
+        return Err(DecryptError::ReplayDetected);
     }
 
-    let decoded = STANDARD.decode(encoded).map_err(|_| "Invalid base64")?;
+    let decoded = STANDARD.decode(encoded).map_err(|_| DecryptError::InvalidBase64)?;
     if decoded.len() < 48 {
-        return Err("Ciphertext too short");
+        return Err(DecryptError::CiphertextTooShort);
     }
 
     let (nonce, rest) = decoded.split_at(16);
@@ -178,14 +187,14 @@ fn quantum_decrypt(
     let expected_tag = hmac_auth(ciphertext, &key);
 
     if expected_tag.ct_eq(tag).unwrap_u8() != 1 {
-        return Err("HMAC verification failed");
+        return Err(DecryptError::HmacVerificationFailed);
     }
 
     let decrypted = stream_cipher(ciphertext, &key, nonce);
-    String::from_utf8(decrypted).map_err(|_| "Invalid UTF-8")
+    String::from_utf8(decrypted).map_err(|_| DecryptError::InvalidUtf8)
 }
 
-// Test
+// Main
 fn main() {
     tracing_subscriber::fmt::init();
 
@@ -224,7 +233,14 @@ fn main() {
     match protected_decrypt(
         message_id,
         &base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap(),
-        || quantum_decrypt(&encrypted, conversation_id, message_id, secret),
+        || quantum_decrypt(&encrypted, conversation_id, message_id, secret)
+            .map_err(|e| match e {
+                DecryptError::ReplayDetected => "Replay detected",
+                DecryptError::InvalidBase64 => "Invalid base64",
+                DecryptError::CiphertextTooShort => "Ciphertext too short",
+                DecryptError::HmacVerificationFailed => "HMAC verification failed",
+                DecryptError::InvalidUtf8 => "Invalid UTF-8",
+            }),
     ) {
         Ok(decrypted) => {
             let duration_dec = start_dec.elapsed();
@@ -237,10 +253,10 @@ fn main() {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::replay_guard::reset_replay_cache;
 
     #[test]
     fn test_roundtrip() {
@@ -249,8 +265,11 @@ mod tests {
         let msg_id = "m1";
         let secret = b"shared-key";
 
+        reset_replay_cache();
+
         let encrypted = quantum_encrypt(msg, conv, msg_id, secret);
-        let decrypted = quantum_decrypt(&encrypted, conv, msg_id, secret).unwrap();
+        let decrypted = quantum_decrypt(&encrypted, conv, msg_id, secret)
+            .expect("Decryption failed unexpectedly");
         assert_eq!(msg, decrypted);
     }
 

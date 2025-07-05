@@ -27,6 +27,11 @@ Thus, the design inherently increases resistance to quantum brute-force attacks 
 - High-entropy 16-byte nonce from random, timestamp, and device ID
 - Addet Timing Attack Test
 
+V.1.3
+- Replay Functions
+- ASVS Level 3 compliant - ASVS 3.8.1–3.9.1
+- ASVS Level 3 Error handling
+
 */
 extern crate hmac;
 extern crate sha2;

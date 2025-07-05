@@ -47,6 +47,9 @@ use rand::Rng;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod replay_guard;
+use replay_guard::is_replay;
+
 use subtle::ConstantTimeEq;
 
 mod ai_guard;
@@ -152,9 +155,17 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
 }
 
 // Decryption function (with constant-time HMAC check)
-fn quantum_decrypt(encoded: &str, conversation_id: &str, message_id: &str, secret: &[u8]) -> Result<String, &'static str> {
-    let decoded = STANDARD.decode(encoded).map_err(|_| "Invalid base64")?;
+fn quantum_decrypt(
+    encoded: &str,
+    conversation_id: &str,
+    message_id: &str,
+    secret: &[u8],
+) -> Result<String, &'static str> {
+    if is_replay(conversation_id, message_id) {
+        return Err("Replay detected");
+    }
 
+    let decoded = STANDARD.decode(encoded).map_err(|_| "Invalid base64")?;
     if decoded.len() < 48 {
         return Err("Ciphertext too short");
     }

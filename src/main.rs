@@ -112,18 +112,19 @@ fn generate_nonce() -> [u8; 16] {
     nonce
 }
 
-// Key derivation using midstate + message_id + nonce + secret (HKDF)
-fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]) -> [u8; 32] {
+// Key derivation using midstate + message_id + nonce + secret (HKDF) |  +++  64 Bit for legal research
+fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]) -> [u8; 8] {
     let salt = midstate.into_inner();
     let info = [message_id.as_bytes(), nonce].concat();
     let hk = Hkdf::<Sha256>::new(Some(&salt), secret);
-    let mut key = [0u8; 32];
+    let mut key = [0u8; 8];
     hk.expand(&info, &mut key).expect("HKDF expand failed");
     key
 }
 
-// XOR stream cipher with SHA256(key || nonce || counter)
-fn stream_cipher(data: &[u8], key: &[u8; 32], nonce: &[u8]) -> Vec<u8> {
+
+// XOR stream cipher with SHA256(key || nonce || counter) +++  64 Bit for legal research
+fn stream_cipher(data: &[u8], key: &[u8; 8], nonce: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(data.len());
     let mut counter: u64 = 0;
 
@@ -134,6 +135,7 @@ fn stream_cipher(data: &[u8], key: &[u8; 32], nonce: &[u8]) -> Vec<u8> {
         hasher.update(counter.to_be_bytes());
 
         let keystream = hasher.finalize();
+
         for (i, &b) in chunk.iter().enumerate() {
             result.push(b ^ keystream[i]);
         }

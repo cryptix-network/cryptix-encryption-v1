@@ -2,6 +2,9 @@
 
 /* 
 
+ * This code deliberately uses a 64-bit key length to comply with legal regulations
+ * and reporting requirements for strong cryptography (128-bit symmetric security and above).
+
 @ TODO:
 - Use the midstate as part of a real secret key, not just derived from a publicly known string.
 - Logging not sufficient

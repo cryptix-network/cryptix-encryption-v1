@@ -35,7 +35,14 @@ V.1.3
 - ASVS Level 3 compliant - ASVS 3.8.1–3.9.1
 - ASVS Level 3 Error handling
 
+V.1.4
+- X25519 Key Exchange 
+- Shared Secret
+- Ephemeral Keys Forward Secrecy
+
 */
+// main.rs
+
 extern crate hmac;
 extern crate sha2;
 extern crate base64;
@@ -45,6 +52,8 @@ extern crate hkdf;
 extern crate tracing;
 extern crate tracing_subscriber;
 extern crate subtle;
+extern crate x25519_dalek;
+extern crate rand_core;
 
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Digest};
@@ -67,10 +76,12 @@ use bitcoin_hashes::HashEngine;
 
 use hkdf::Hkdf;
 use tracing::{info, error};
+use hex;
+
+use x25519_dalek::{EphemeralSecret, PublicKey};
+use rand::rngs::OsRng;
 
 type HmacSha256 = Hmac<Sha256>;
-
-
 #[derive(Debug)]
 enum DecryptError {
     ReplayDetected,
@@ -80,14 +91,26 @@ enum DecryptError {
     InvalidUtf8,
 }
 
-// Get SHA-256 midstate 
+// Generate ephemeral X25519 keypair
+fn generate_keypair() -> (EphemeralSecret, PublicKey) {
+    let secret = EphemeralSecret::random_from_rng(OsRng);
+    let public = PublicKey::from(&secret);
+    (secret, public)
+}
+
+// Compute shared secret from private key and peer's public key
+fn compute_shared_secret(secret: EphemeralSecret, peer_public: &PublicKey) -> [u8; 32] {
+    secret.diffie_hellman(peer_public).to_bytes()
+}
+
+// Generate midstate from data (used as salt)
 fn generate_midstate(data: &[u8]) -> Midstate {
     let mut engine = Sha256Engine::default();
     engine.input(data);
     engine.midstate()
 }
 
-// Generate a deterministic, high-entropy 16-byte nonce from random, timestamp, and device ID
+// Create 16-byte nonce from randomness, timestamp, and device id
 fn generate_nonce() -> [u8; 16] {
     let mut rng = rand::thread_rng();
     let mut random_bytes = [0u8; 16];
@@ -99,7 +122,7 @@ fn generate_nonce() -> [u8; 16] {
         .as_nanos()
         .to_be_bytes();
 
-    let device_id = b"CryptixDevice42"; 
+    let device_id = b"CryptixDevice42";
 
     let mut entropy_source = Vec::with_capacity(16 + 16 + 16);
     entropy_source.extend_from_slice(&random_bytes);
@@ -115,7 +138,7 @@ fn generate_nonce() -> [u8; 16] {
     nonce
 }
 
-// Key derivation using midstate + message_id + nonce + secret (HKDF) |  +++  64 Bit for legal research
+// Derive an 8-byte encryption key using HKDF with given parameters
 fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]) -> [u8; 8] {
     let salt = midstate.into_inner();
     let info = [message_id.as_bytes(), nonce].concat();
@@ -125,8 +148,7 @@ fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]
     key
 }
 
-
-// XOR stream cipher with SHA256(key || nonce || counter) +++  64 Bit for legal research
+// Encrypt or decrypt data using a SHA256-based stream cipher
 fn stream_cipher(data: &[u8], key: &[u8; 8], nonce: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(data.len());
     let mut counter: u64 = 0;
@@ -148,14 +170,14 @@ fn stream_cipher(data: &[u8], key: &[u8; 8], nonce: &[u8]) -> Vec<u8> {
     result
 }
 
-// HMAC for authentication
+// Generate HMAC-SHA256 authentication tag
 fn hmac_auth(data: &[u8], key: &[u8]) -> Vec<u8> {
     let mut hmac = HmacSha256::new_from_slice(key).expect("HMAC requires a key");
     hmac.update(data);
-    hmac.finalize().into_bytes().to_vec() 
+    hmac.finalize().into_bytes().to_vec()
 }
 
-// Encryption function
+// Encrypt a message and return base64-encoded output
 fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret: &[u8]) -> String {
     let midstate = generate_midstate(conversation_id.as_bytes());
     let nonce = generate_nonce();
@@ -168,12 +190,12 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
     let mut output = Vec::new();
     output.extend_from_slice(&nonce);
     output.extend_from_slice(&ciphertext);
-    output.extend_from_slice(&tag); 
+    output.extend_from_slice(&tag);
 
     STANDARD.encode(&output)
 }
 
-// Decryption function
+// Decrypt base64-encoded input, verify, and return plaintext string
 fn quantum_decrypt(
     encoded: &str,
     conversation_id: &str,
@@ -204,23 +226,25 @@ fn quantum_decrypt(
     String::from_utf8(decrypted).map_err(|_| DecryptError::InvalidUtf8)
 }
 
-// Main
 fn main() {
     tracing_subscriber::fmt::init();
+
+    let (alice_secret, alice_public) = generate_keypair();
+    let (bob_secret, bob_public) = generate_keypair();
+
+    let alice_shared_secret = compute_shared_secret(alice_secret, &bob_public);
+    let bob_shared_secret = compute_shared_secret(bob_secret, &alice_public);
+
+    assert_eq!(alice_shared_secret, bob_shared_secret);
 
     let message = "Hello Cryptix! 🧠🔐";
     let conversation_id = "CONV-ALPHA-007";
     let message_id = "MSG-QUANTUM-TEST-42";
-    let secret = b"MySharedSecretKey123";
 
-    info!("--- Quantum Encryption Debug ---");
-    info!("Original Message: {}", message);
-
-    let midstate = generate_midstate(conversation_id.as_bytes());
-    info!("Midstate (hex): {}", hex::encode(midstate.into_inner()));
+    info!("Shared Secret: {}", hex::encode(alice_shared_secret));
 
     let start_enc = Instant::now();
-    let encrypted = quantum_encrypt(message, conversation_id, message_id, secret);
+    let encrypted = quantum_encrypt(message, conversation_id, message_id, &alice_shared_secret);
     let duration_enc = start_enc.elapsed();
 
     info!("Encrypted (Base64): {}", encrypted);
@@ -233,9 +257,9 @@ fn main() {
     let estimated_quantum_seconds = 2f64.powi(quantum_bits as i32) * duration_enc.as_secs_f64();
 
     info!("Estimated brute-force time:");
-    info!(" - Classical (2^{classical_bits} ops): {:.3e} seconds (~{:.3e} Years)", 
+    info!(" - Classical (2^{classical_bits} ops): {:.3e} seconds (~{:.3e} Years)",
         estimated_classical_seconds, estimated_classical_seconds / (60.0*60.0*24.0*365.25));
-    info!(" - Quantum (Grover 2^{quantum_bits} ops): {:.3e} seconds (~{:.3e} Years)", 
+    info!(" - Quantum (Grover 2^{quantum_bits} ops): {:.3e} seconds (~{:.3e} Years)",
         estimated_quantum_seconds, estimated_quantum_seconds / (60.0*60.0*24.0*365.25));
 
     info!("--- Quantum Decryption Debug ---");
@@ -243,7 +267,7 @@ fn main() {
     match protected_decrypt(
         message_id,
         &base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap(),
-        || quantum_decrypt(&encrypted, conversation_id, message_id, secret)
+        || quantum_decrypt(&encrypted, conversation_id, message_id, &bob_shared_secret)
             .map_err(|e| match e {
                 DecryptError::ReplayDetected => "Replay detected",
                 DecryptError::InvalidBase64 => "Invalid base64",
@@ -267,6 +291,8 @@ fn main() {
 mod tests {
     use super::*;
     use crate::replay_guard::reset_replay_cache;
+    use x25519_dalek::{EphemeralSecret, PublicKey};
+    use rand::rngs::OsRng;
 
     #[test]
     fn test_roundtrip() {
@@ -279,7 +305,7 @@ mod tests {
 
         let encrypted = quantum_encrypt(msg, conv, msg_id, secret);
         let decrypted = quantum_decrypt(&encrypted, conv, msg_id, secret)
-            .expect("Decryption failed unexpectedly");
+            .expect("Decryption unexpectedly failed");
         assert_eq!(msg, decrypted);
     }
 
@@ -311,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn test_different_nonce_gives_different_ciphertext() {
+    fn test_different_nonce_produces_different_ciphertext() {
         let msg = "NonceTest";
         let conv = "conv-nonce";
         let msg_id = "msg-nonce";
@@ -352,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hmac_cteq() {
+    fn test_hmac_tampering_detected() {
         let msg = "CTEqTest!";
         let conv = "conv-cteq";
         let msg_id = "msg-cteq";
@@ -362,26 +388,65 @@ mod tests {
         let mut decoded = base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap();
 
         let hmac_offset = decoded.len() - 32;
-        decoded[hmac_offset] ^= 0xFF; 
+        decoded[hmac_offset] ^= 0xFF;
 
         let tampered = base64::engine::general_purpose::STANDARD.encode(&decoded);
 
         let result = quantum_decrypt(&tampered, conv, msg_id, secret);
-        assert!(result.is_err(), "Manipulated HMAC should have failed");
+        assert!(result.is_err(), "Tampered HMAC should fail");
     }
 
     #[test]
-    fn test_non_utf8_data_is_error() {
+    fn test_invalid_utf8_fails() {
         let conv = "conv-bin";
         let msg_id = "msg-bin";
         let secret = b"key";
 
         let mut bad_bytes = quantum_encrypt("Valid UTF8", conv, msg_id, secret);
         let mut raw = base64::engine::general_purpose::STANDARD.decode(&bad_bytes).unwrap();
-        raw[40] = 0xFF;
+        raw[40] = 0xFF; 
         bad_bytes = base64::engine::general_purpose::STANDARD.encode(&raw);
 
         let result = quantum_decrypt(&bad_bytes, conv, msg_id, secret);
         assert!(result.is_err());
+    }
+
+    fn generate_keypair() -> (EphemeralSecret, PublicKey) {
+        let secret = EphemeralSecret::random_from_rng(OsRng);
+        let public = PublicKey::from(&secret);
+        (secret, public)
+    }
+
+    fn compute_shared_secret(secret: EphemeralSecret, public: &PublicKey) -> [u8; 32] {
+        secret.diffie_hellman(public).to_bytes()
+    }
+
+    #[test]
+    fn test_keypair_generation() {
+        let (secret, public) = generate_keypair();
+        assert_eq!(public.as_bytes().len(), 32);
+
+        let shared = secret.diffie_hellman(&public).to_bytes();
+        assert_eq!(shared.len(), 32);
+    }
+
+    #[test]
+    fn test_shared_secret_symmetry() {
+        let (alice_secret, alice_public) = generate_keypair();
+        let (bob_secret, bob_public) = generate_keypair();
+
+        let alice_shared = compute_shared_secret(alice_secret, &bob_public);
+        let bob_shared = compute_shared_secret(bob_secret, &alice_public);
+
+        assert_eq!(alice_shared, bob_shared);
+    }
+
+    #[test]
+    fn test_shared_secret_same_keypair_matches() {
+        let (secret, public) = generate_keypair();
+
+        let _shared1 = compute_shared_secret(secret, &public);
+
+        // Can't reuse the secret; test omitted.
     }
 }

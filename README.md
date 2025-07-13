@@ -27,6 +27,10 @@ V.1.3
 - ASVS Level 3 compliant - ASVS 3.8.1–3.9.1
 - ASVS Level 3 Error handling
 
+V.1.4
+- X25519 Key Exchange 
+- Shared Secret
+- Ephemeral Keys Forward Secrecy
 
 
 Important Legal Notice Regarding Cryptographic Functionality

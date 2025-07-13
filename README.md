@@ -26,3 +26,17 @@ V.1.3
 - Replay Functions
 - ASVS Level 3 compliant - ASVS 3.8.1–3.9.1
 - ASVS Level 3 Error handling
+
+
+
+Important Legal Notice Regarding Cryptographic Functionality
+
+This software project contains basic cryptographic functions. The cryptographic strength has been intentionally limited (e.g. to 64-bit symmetric keys) to comply with applicable national and international export regulations concerning the use and distribution of strong encryption technologies.
+
+This project is provided strictly for educational, research, and experimental purposes.
+The author(s) do not claim suitability for production, military, or commercial deployment.
+No guarantee is given for compliance with local export, import, or usage laws in your country.
+
+It is the responsibility of each user or distributor to ensure compliance with relevant regulations in their jurisdiction.
+
+This project is released under an open-source license and is not intended for unlawful use.

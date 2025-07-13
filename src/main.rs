@@ -149,21 +149,38 @@ fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]
 }
 
 // Encrypt or decrypt data using a SHA256-based stream cipher
-fn stream_cipher(data: &[u8], key: &[u8; 8], nonce: &[u8]) -> Vec<u8> {
+pub fn stream_cipher(data: &[u8], mut key: [u8; 8], nonce: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(data.len());
     let mut counter: u64 = 0;
+    let mut prev_keystream = [0u8; 32];
 
     for chunk in data.chunks(32) {
+        // Rekey every 1024 blocks
+        if counter > 0 && counter % 1024 == 0 {
+            let mut rekey_hasher = Sha256::new();
+            rekey_hasher.update(&key);
+            rekey_hasher.update(nonce);
+            rekey_hasher.update(counter.to_be_bytes());
+            let new_key = rekey_hasher.finalize();
+            key.copy_from_slice(&new_key[..8]);
+        }
+
+        // Generate keystream block
         let mut hasher = Sha256::new();
-        hasher.update(key);
+        hasher.update(&key);
         hasher.update(nonce);
         hasher.update(counter.to_be_bytes());
+        hasher.update(&prev_keystream);
 
         let keystream = hasher.finalize();
+        let mut output_block = Vec::with_capacity(chunk.len());
 
         for (i, &b) in chunk.iter().enumerate() {
-            result.push(b ^ keystream[i]);
+            output_block.push(b ^ keystream[i]);
         }
+
+        result.extend_from_slice(&output_block);
+        prev_keystream.copy_from_slice(&keystream);
         counter += 1;
     }
 
@@ -184,7 +201,7 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
     let key = derive_key(message_id, &midstate, &nonce, secret);
 
     let plaintext = input.as_bytes();
-    let ciphertext = stream_cipher(plaintext, &key, &nonce);
+    let ciphertext = stream_cipher(plaintext, key, &nonce);
     let tag = hmac_auth(&ciphertext, &key);
 
     let mut output = Vec::new();
@@ -222,7 +239,7 @@ fn quantum_decrypt(
         return Err(DecryptError::HmacVerificationFailed);
     }
 
-    let decrypted = stream_cipher(ciphertext, &key, nonce);
+    let decrypted = stream_cipher(ciphertext, key, nonce);
     String::from_utf8(decrypted).map_err(|_| DecryptError::InvalidUtf8)
 }
 

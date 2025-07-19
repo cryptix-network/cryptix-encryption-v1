@@ -10,6 +10,7 @@
 - Logging not sufficient
 - Exchange Sha3 with Cryptix OX8 Light
 - Prepare conversation_id and message_id for dynamic unkown input
+- Shor resistance
 
 @V.1.0
 -Template created
@@ -39,6 +40,9 @@ V.1.4
 - X25519 Key Exchange 
 - Shared Secret
 - Ephemeral Keys Forward Secrecy
+
+V1.5
+- Adds dynamic low level noise padding before and after ciphertext 
 
 */
 // main.rs
@@ -82,6 +86,7 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use rand::rngs::OsRng;
 
 type HmacSha256 = Hmac<Sha256>;
+
 #[derive(Debug)]
 enum DecryptError {
     ReplayDetected,
@@ -91,26 +96,26 @@ enum DecryptError {
     InvalidUtf8,
 }
 
-// Generate ephemeral X25519 keypair
+// Generate an ephemeral X25519 keypair
 fn generate_keypair() -> (EphemeralSecret, PublicKey) {
     let secret = EphemeralSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
     (secret, public)
 }
 
-// Compute shared secret from private key and peer's public key
+// Compute a shared secret using private key and peer's public key
 fn compute_shared_secret(secret: EphemeralSecret, peer_public: &PublicKey) -> [u8; 32] {
     secret.diffie_hellman(peer_public).to_bytes()
 }
 
-// Generate midstate from data (used as salt)
+// Generate midstate hash from input (used as salt)
 fn generate_midstate(data: &[u8]) -> Midstate {
     let mut engine = Sha256Engine::default();
     engine.input(data);
     engine.midstate()
 }
 
-// Create 16-byte nonce from randomness, timestamp, and device id
+// Create 16-byte nonce using random data, timestamp, and device ID
 fn generate_nonce() -> [u8; 16] {
     let mut rng = rand::thread_rng();
     let mut random_bytes = [0u8; 16];
@@ -138,7 +143,7 @@ fn generate_nonce() -> [u8; 16] {
     nonce
 }
 
-// Derive an 8-byte encryption key using HKDF with given parameters
+// Derive an 8-byte encryption key using HKDF
 fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]) -> [u8; 8] {
     let salt = midstate.into_inner();
     let info = [message_id.as_bytes(), nonce].concat();
@@ -148,14 +153,13 @@ fn derive_key(message_id: &str, midstate: &Midstate, nonce: &[u8], secret: &[u8]
     key
 }
 
-// Encrypt or decrypt data using a SHA256-based stream cipher
+// Stream cipher based on SHA256 as keystream generator
 pub fn stream_cipher(data: &[u8], mut key: [u8; 8], nonce: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(data.len());
     let mut counter: u64 = 0;
     let mut prev_keystream = [0u8; 32];
 
     for chunk in data.chunks(32) {
-        // Rekey every 1024 blocks
         if counter > 0 && counter % 1024 == 0 {
             let mut rekey_hasher = Sha256::new();
             rekey_hasher.update(&key);
@@ -165,7 +169,6 @@ pub fn stream_cipher(data: &[u8], mut key: [u8; 8], nonce: &[u8]) -> Vec<u8> {
             key.copy_from_slice(&new_key[..8]);
         }
 
-        // Generate keystream block
         let mut hasher = Sha256::new();
         hasher.update(&key);
         hasher.update(nonce);
@@ -194,7 +197,57 @@ fn hmac_auth(data: &[u8], key: &[u8]) -> Vec<u8> {
     hmac.finalize().into_bytes().to_vec()
 }
 
-// Encrypt a message and return base64-encoded output
+
+// Adds dynamic noise padding before and after ciphertext
+fn add_noise_padding(ciphertext: &[u8]) -> Vec<u8> {
+    let mut rng = rand::thread_rng();
+    let prefix_len = rng.gen_range(8..=64);
+    let suffix_len = rng.gen_range(8..=64);
+
+    let mut padded = Vec::with_capacity(3 + prefix_len + ciphertext.len() + suffix_len);
+
+    let original_len = (ciphertext.len() as u16).to_be_bytes();
+    padded.extend_from_slice(&original_len);
+
+    padded.push(prefix_len as u8);
+
+    // Prefix noise
+    let mut prefix_noise = vec![0u8; prefix_len];
+    rng.fill(&mut prefix_noise[..]);
+    padded.extend(prefix_noise);
+
+    // Ciphertext
+    padded.extend_from_slice(ciphertext);
+
+    // Suffix noise
+    let mut suffix_noise = vec![0u8; suffix_len];
+    rng.fill(&mut suffix_noise[..]);
+    padded.extend(suffix_noise);
+
+    padded
+}
+
+// Removes dynamic padding
+fn remove_noise_padding(padded: &[u8]) -> Option<Vec<u8>> {
+    if padded.len() < 3 {
+        return None;
+    }
+
+    let original_len = u16::from_be_bytes([padded[0], padded[1]]) as usize;
+    let prefix_len = padded[2] as usize;
+
+    if padded.len() < 3 + prefix_len + original_len {
+        return None;
+    }
+
+    let start = 3 + prefix_len;
+    let end = start + original_len;
+
+    Some(padded[start..end].to_vec())
+}
+
+
+// Encrypt message, return base64-encoded output
 fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret: &[u8]) -> String {
     let midstate = generate_midstate(conversation_id.as_bytes());
     let nonce = generate_nonce();
@@ -202,17 +255,18 @@ fn quantum_encrypt(input: &str, conversation_id: &str, message_id: &str, secret:
 
     let plaintext = input.as_bytes();
     let ciphertext = stream_cipher(plaintext, key, &nonce);
-    let tag = hmac_auth(&ciphertext, &key);
+    let padded_ciphertext = add_noise_padding(&ciphertext);
+    let tag = hmac_auth(&padded_ciphertext, &key);
 
     let mut output = Vec::new();
     output.extend_from_slice(&nonce);
-    output.extend_from_slice(&ciphertext);
+    output.extend_from_slice(&padded_ciphertext);
     output.extend_from_slice(&tag);
 
     STANDARD.encode(&output)
 }
 
-// Decrypt base64-encoded input, verify, and return plaintext string
+// Decrypt base64-encoded message and validate
 fn quantum_decrypt(
     encoded: &str,
     conversation_id: &str,
@@ -229,17 +283,20 @@ fn quantum_decrypt(
     }
 
     let (nonce, rest) = decoded.split_at(16);
-    let (ciphertext, tag) = rest.split_at(rest.len() - 32);
+    let (padded_ciphertext, tag) = rest.split_at(rest.len() - 32);
 
     let midstate = generate_midstate(conversation_id.as_bytes());
     let key = derive_key(message_id, &midstate, nonce, secret);
-    let expected_tag = hmac_auth(ciphertext, &key);
 
+    let expected_tag = hmac_auth(padded_ciphertext, &key);
     if expected_tag.ct_eq(tag).unwrap_u8() != 1 {
         return Err(DecryptError::HmacVerificationFailed);
     }
 
-    let decrypted = stream_cipher(ciphertext, key, nonce);
+    let ciphertext = remove_noise_padding(padded_ciphertext)
+        .ok_or(DecryptError::CiphertextTooShort)?;
+
+    let decrypted = stream_cipher(&ciphertext, key, nonce);
     String::from_utf8(decrypted).map_err(|_| DecryptError::InvalidUtf8)
 }
 
@@ -283,7 +340,7 @@ fn main() {
     let start_dec = Instant::now();
     match protected_decrypt(
         message_id,
-        &base64::engine::general_purpose::STANDARD.decode(&encrypted).unwrap(),
+        &STANDARD.decode(&encrypted).unwrap(),
         || quantum_decrypt(&encrypted, conversation_id, message_id, &bob_shared_secret)
             .map_err(|e| match e {
                 DecryptError::ReplayDetected => "Replay detected",

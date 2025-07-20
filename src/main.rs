@@ -67,6 +67,7 @@ use rand::Rng;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+
 mod replay_guard;
 use replay_guard::is_replay;
 
@@ -367,6 +368,7 @@ mod tests {
     use crate::replay_guard::reset_replay_cache;
     use x25519_dalek::{EphemeralSecret, PublicKey};
     use rand::rngs::OsRng;
+    use std::time::Duration;
 
     #[test]
     fn test_roundtrip() {
@@ -535,5 +537,36 @@ mod tests {
         let ct2 = quantum_encrypt(msg, conv, msg_id, secret);
 
         assert_ne!(ct1, ct2, "Padding should produce entropy");
+    }
+
+    #[test]
+    fn test_encryption_decryption_speed() {
+        let msg = "Benchmarking test message!";
+        let conv = "conv-benchmark";
+        let msg_id = "msg-benchmark";
+        let secret = b"speed-key";
+
+        reset_replay_cache();
+
+        let start_enc = std::time::Instant::now();
+        let encrypted = quantum_encrypt(msg, conv, msg_id, secret);
+        let dur_enc = start_enc.elapsed();
+        assert!(
+            dur_enc < Duration::from_millis(5),
+            "Encryption took too long: {:?}",
+            dur_enc
+        );
+
+        let start_dec = std::time::Instant::now();
+        let decrypted = quantum_decrypt(&encrypted, conv, msg_id, secret)
+            .expect("Decryption failed unexpectedly");
+        let dur_dec = start_dec.elapsed();
+        assert!(
+            dur_dec < Duration::from_millis(5),
+            "Decryption took too long: {:?}",
+            dur_dec
+        );
+
+        assert_eq!(msg, decrypted);
     }
 }

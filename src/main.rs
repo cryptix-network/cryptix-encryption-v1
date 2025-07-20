@@ -523,4 +523,17 @@ mod tests {
 
         // Can't reuse the secret; test omitted.
     }
+
+    #[test]
+    fn test_padding_entropy() {
+        let msg = "X";
+        let conv = "conv-pad";
+        let msg_id = "pad1";
+        let secret = b"pad-key";
+
+        let ct1 = quantum_encrypt(msg, conv, msg_id, secret);
+        let ct2 = quantum_encrypt(msg, conv, msg_id, secret);
+
+        assert_ne!(ct1, ct2, "Padding should produce entropy");
+    }
 }
